@@ -2,22 +2,27 @@
   "artifact_sources": [
     {
       "name": "github",
-      "url": "https://github.com/weishouxian/PTNexus/releases/download/{version}/{filename}"
-    },
-    {
-      "name": "gitee",
-      "url": "https://gitee.com/wsx181/PTNexus/releases/download/{version}/{filename}"
+      "url": "https://github.com/tycgd/PTNexus/releases/download/{version}/{filename}"
     },
     {
       "name": "github-proxy",
-      "url": "https://gh.ddlc.top/https://github.com/weishouxian/PTNexus/releases/download/{version}/{filename}"
+      "url": "https://gh.ddlc.top/https://github.com/tycgd/PTNexus/releases/download/{version}/{filename}"
     },
     {
       "name": "github-proxy2",
-      "url": "https://ghproxy.net/https://github.com/weishouxian/PTNexus/releases/download/{version}/{filename}"
+      "url": "https://ghproxy.net/https://github.com/tycgd/PTNexus/releases/download/{version}/{filename}"
     }
   ],
   "history": [
+    {
+      "version": "v4.0.21",
+      "date": "2026.11.25",
+      "changes": [
+        "修复：末日图床（img.seedvault.cn）登录 token 进程内缓存复用（同账号登录串行 + 最小间隔节流 + 401 失效重登），登录/上传命中 429/5xx 按 2/5/10 秒退避重试并尊重 Retry-After；失败默认报错，不再静默回退 Pixhost（可用 cross_seed.image_hoster_failure_policy 配置为显式回退）",
+        "优化：正式截图超过 1MiB 时自动按 1920→1280→1024→800→640 宽度阶梯下采样（目标 ≤700KB、硬上限 1MiB），保持 PNG 格式，兼容 SSD 等要求 PNG 截图的站点，缓解末日图床大文件断流",
+        "调整：发布队列任务失败不再自动重试（downloader_queue.max_retries=0，配置层生效）"
+      ]
+    },
     {
       "version": "v4.0.20",
       "date": "2026.11.24",

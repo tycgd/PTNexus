@@ -395,10 +395,10 @@ jobs:
           printf '%s\n' "$BODY" > "$body_file"
 
           python3 scripts/publish-gitee-release.py \
-            --owner sqing33 \
+            --owner tycgd \
             --repo PTNexus \
             --tag "$RELEASE_TAG" \
-            --target-commitish go \
+            --target-commitish agsv-fix \
             --name "Beta $VERSION" \
             --body-file "$body_file" \
             --assets-dir "dist/release-assets/$VERSION" \
