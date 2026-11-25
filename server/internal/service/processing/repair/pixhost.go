@@ -114,7 +114,7 @@ func normalizePosterURLForChevereto(url string, cfg CheveretoUploadConfig) (stri
 		return url, "末日图床域名未配置，已回退原始链接"
 	}
 
-	token, err := CheveretoLogin(cfg)
+	token, err := GetLskyToken(cfg)
 	if err != nil {
 		logx.Warnf(posterTransferLogModule, "末日图床登录失败，回退原始URL source=%s err=%v", CompactLogText(url, 160), err)
 		return url, "末日图床登录失败，已回退原始链接：" + CompactLogText(err.Error(), 120)

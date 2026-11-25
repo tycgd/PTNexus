@@ -492,6 +492,12 @@ func generateAndUploadScreenshotsWithPoints(input ScreenshotGenerateInput, selec
 		logx.PlainWarnf("盒子代理截图跳过：读取下载器配置失败 downloader_id=%s err=%v", downloaderID, dErr)
 	}
 
+	// 末日图床登录失败（默认 retry 策略）：本地截图会改走末日图床上传，直接 fail-fast，绝不静默回退 Pixhost。
+	// 放在代理链路之后：若已通过盒子代理成功生成截图会提前返回，不受影响。
+	if uploadCtx.Hoster == "agsv" && uploadCtx.LoginErr != nil {
+		return nil, fmt.Errorf("末日图床登录失败，截图任务中止（策略=%s，不回退免费图库）: %w", uploadCtx.FailurePolicy, uploadCtx.LoginErr)
+	}
+
 	translatedSavePath := TranslateDownloaderPath(input.RootConfig, downloaderID, savePath)
 	if translatedSavePath != savePath && savePath != "" && translatedSavePath != "" {
 		logx.PlainInfof("路径映射: %s -> %s", savePath, translatedSavePath)

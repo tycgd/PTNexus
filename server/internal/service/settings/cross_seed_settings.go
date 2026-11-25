@@ -15,6 +15,7 @@ func (s *SettingsService) GetCrossSeedSettings() map[string]any {
 		"pixhost_domain":                   "img2.pixhost.cc",
 		"agsv_email":                       "",
 		"agsv_password":                    "",
+		"image_hoster_failure_policy":      "retry",
 		"default_downloader":               "",
 		"auto_add_existing_to_downloader":  true,
 		"auto_update_existing_torrent":     false,
@@ -58,6 +59,12 @@ func (s *SettingsService) SaveCrossSeedSettings(newSettings map[string]any) erro
 	if toString(merged["image_hoster"], "") == "" {
 		merged["image_hoster"] = "pixhost"
 	}
+	// 图床上传失败策略只允许 retry（默认，失败报错）与 fallback_pixhost（显式回退），非法值回退 retry。
+	policy := strings.TrimSpace(toString(merged["image_hoster_failure_policy"], "retry"))
+	if policy != "retry" && policy != "fallback_pixhost" {
+		policy = "retry"
+	}
+	merged["image_hoster_failure_policy"] = policy
 	merged["pixhost_domain"] = normalizePixhostDomainSetting(merged["pixhost_domain"])
 	// PTGen 节点仅持久化 id 与启停状态，数组顺序即优先级。
 	merged["ptgen_nodes"] = processingrepair.NormalizePTGenNodeSettingsPayload(merged["ptgen_nodes"])

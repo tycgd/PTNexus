@@ -379,6 +379,24 @@
               </el-select>
             </el-form-item>
 
+            <el-form-item
+              v-if="settingsForm.image_hoster === 'agsv'"
+              label="上传失败策略"
+              class="form-item"
+            >
+              <el-select
+                v-model="settingsForm.image_hoster_failure_policy"
+                placeholder="请选择上传失败策略"
+                @change="autoSaveCrossSeedSettings"
+              >
+                <el-option label="重试后报错（默认）" value="retry" />
+                <el-option label="回退免费图库（Pixhost）" value="fallback_pixhost" />
+              </el-select>
+              <el-text type="info" size="small" style="display: block; margin-top: 8px">
+                末日图床登录/上传失败时：默认退避重试后直接报错；选择回退后会在重试耗尽时改用 Pixhost。
+              </el-text>
+            </el-form-item>
+
             <el-form-item label="获取图片数量" class="form-item">
               <el-input-number
                 v-model="settingsForm.screenshot_count"
@@ -444,7 +462,7 @@
 
               <div v-else key="other" class="placeholder-section">
                 <el-text type="info" size="small"
-                  >当前图床无需额外配置，但是需要代理才能上传</el-text
+                  >Pixhost 为境外图床，上传通常需要代理；末日图床（国内直连）无需代理。</el-text
                 >
               </div>
             </transition>
@@ -1256,6 +1274,7 @@ interface CrossSeedSettings {
   pixhost_domain?: string
   agsv_email?: string
   agsv_password?: string
+  image_hoster_failure_policy?: string
   default_downloader?: string
   auto_add_existing_to_downloader?: boolean
   publish_batch_concurrency_mode?: PublishBatchConcurrencyMode
@@ -1270,6 +1289,7 @@ const settingsForm = reactive<CrossSeedSettings>({
   pixhost_domain: 'img2.pixhost.cc',
   agsv_email: '',
   agsv_password: '',
+  image_hoster_failure_policy: 'retry',
   default_downloader: '',
   auto_add_existing_to_downloader: true,
   publish_batch_concurrency_mode: 'cpu',
@@ -1668,6 +1688,7 @@ const autoSaveCrossSeedSettings = async () => {
       pixhost_domain: settingsForm.pixhost_domain,
       agsv_email: settingsForm.agsv_email,
       agsv_password: settingsForm.agsv_password,
+      image_hoster_failure_policy: settingsForm.image_hoster_failure_policy,
       default_downloader: settingsForm.default_downloader,
       auto_add_existing_to_downloader: settingsForm.auto_add_existing_to_downloader,
       publish_batch_concurrency_mode: settingsForm.publish_batch_concurrency_mode,
@@ -2069,6 +2090,7 @@ const saveUploadSettings = async () => {
       pixhost_domain: settingsForm.pixhost_domain,
       agsv_email: settingsForm.agsv_email,
       agsv_password: settingsForm.agsv_password,
+      image_hoster_failure_policy: settingsForm.image_hoster_failure_policy,
       default_downloader: settingsForm.default_downloader,
       auto_add_existing_to_downloader: settingsForm.auto_add_existing_to_downloader,
       cspt_ptgen_token: uploadForm.cspt_ptgen_token,

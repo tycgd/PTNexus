@@ -269,6 +269,8 @@
 | `internal/service/processing/repair/screenshot_preview.go` | 低清候选截图生成与正式截图时间点收敛 |
 | `internal/service/processing/repair/images.go` | 图片链接提取与 BBCode 转换 |
 | `internal/service/processing/repair/pixhost.go` | Pixhost 上传与链接标准化 |
+| `internal/service/processing/repair/chevereto.go` | 末日图床（Lsky Pro）登录、上传、失败策略与截图上传上下文 |
+| `internal/service/processing/repair/lsky_token.go` | 末日图床 token 进程内缓存复用、登录节流与退避重试 |
 | `internal/service/processing/repair/http.go` | 修复环节网络请求工具 |
 | `internal/service/processing/repair/utils.go` | 文本压缩等辅助函数 |
 
