@@ -650,6 +650,10 @@ func generateAndUploadScreenshotsWithPoints(input ScreenshotGenerateInput, selec
 				logx.PlainInfof("❌ ffmpeg HDR 直截失败: %s", sanitizeCommandErrForLog(err))
 				continue
 			}
+			if _, sizeErr := ensureScreenshotWithinBudget(ffmpegPath, finalImagePath); sizeErr != nil {
+				logx.PlainInfof("❌ 截图尺寸预算处理失败: %s", sanitizeCommandErrForLog(sizeErr))
+				continue
+			}
 			logx.Infof(screenshotPreviewLogModule, "截图 DV 直截 scene=正式截图 index=%d output=%s", i+1, finalImagePath)
 			jobs <- uploadJob{Index: i, TimeStr: timeStr, FilePath: finalImagePath}
 			continue
@@ -674,12 +678,25 @@ func generateAndUploadScreenshotsWithPoints(input ScreenshotGenerateInput, selec
 		compressTime := time.Since(startCompress).Seconds()
 
 		srcSize := fileSizeBytes(rawPNG)
-		dstSize := fileSizeBytes(finalImagePath)
+		preBudgetSize := fileSizeBytes(finalImagePath)
+		finalSize, sizeErr := ensureScreenshotWithinBudget(ffmpegPath, finalImagePath)
+		if sizeErr != nil {
+			logx.PlainInfof("❌ 截图尺寸预算处理失败: %s", sanitizeCommandErrForLog(sizeErr))
+			continue
+		}
+		dstSize := finalSize
+		if dstSize <= 0 {
+			dstSize = preBudgetSize
+		}
+		downscaleNote := ""
+		if preBudgetSize > 0 && dstSize < preBudgetSize {
+			downscaleNote = "，已按预算下采样"
+		}
 		ratio := 0.0
 		if srcSize > 0 {
 			ratio = float64(dstSize) / float64(srcSize) * 100
 		}
-		logx.PlainInfof("   ✅ 压缩完成: %.2f MB (压缩率 %.1f%%) | 耗时 %.2fs", float64(dstSize)/1024.0/1024.0, ratio, compressTime)
+		logx.PlainInfof("   ✅ 压缩完成: %.2f MB (压缩率 %.1f%%) | 耗时 %.2fs%s", float64(dstSize)/1024.0/1024.0, ratio, compressTime, downscaleNote)
 		jobs <- uploadJob{Index: i, TimeStr: timeStr, FilePath: finalImagePath}
 	}
 

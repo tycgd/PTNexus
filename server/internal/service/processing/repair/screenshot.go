@@ -2,7 +2,9 @@ package repair
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"os/exec"
@@ -289,6 +291,10 @@ func GenerateAndUploadScreenshots(input ScreenshotGenerateInput) ([]string, erro
 				logx.PlainInfof("❌ ffmpeg HDR 直截失败: %s", sanitizeCommandErrForLog(err))
 				continue
 			}
+			if _, sizeErr := ensureScreenshotWithinBudget(ffmpegPath, finalImagePath); sizeErr != nil {
+				logx.PlainInfof("❌ 截图尺寸预算处理失败: %s", sanitizeCommandErrForLog(sizeErr))
+				continue
+			}
 			logx.Infof(screenshotValidateLogModule, "截图 HDR 直截 scene=自动截图 index=%d output=%s", i+1, finalImagePath)
 			jobs <- uploadJob{Index: i, TimeStr: timeStr, FilePath: finalImagePath}
 			continue
@@ -313,12 +319,25 @@ func GenerateAndUploadScreenshots(input ScreenshotGenerateInput) ([]string, erro
 		compressTime := time.Since(startCompress).Seconds()
 
 		srcSize := fileSizeBytes(rawPNG)
-		dstSize := fileSizeBytes(finalImagePath)
+		preBudgetSize := fileSizeBytes(finalImagePath)
+		finalSize, sizeErr := ensureScreenshotWithinBudget(ffmpegPath, finalImagePath)
+		if sizeErr != nil {
+			logx.PlainInfof("❌ 截图尺寸预算处理失败: %s", sanitizeCommandErrForLog(sizeErr))
+			continue
+		}
+		dstSize := finalSize
+		if dstSize <= 0 {
+			dstSize = preBudgetSize
+		}
+		downscaleNote := ""
+		if preBudgetSize > 0 && dstSize < preBudgetSize {
+			downscaleNote = "，已按预算下采样"
+		}
 		ratio := 0.0
 		if srcSize > 0 {
 			ratio = float64(dstSize) / float64(srcSize) * 100
 		}
-		logx.PlainInfof("   ✅ 压缩完成: %.2f MB (压缩率 %.1f%%) | 耗时 %.2fs", float64(dstSize)/1024.0/1024.0, ratio, compressTime)
+		logx.PlainInfof("   ✅ 压缩完成: %.2f MB (压缩率 %.1f%%) | 耗时 %.2fs%s", float64(dstSize)/1024.0/1024.0, ratio, compressTime, downscaleNote)
 
 		// 上传不并发截图，但上传并发。
 		jobs <- uploadJob{Index: i, TimeStr: timeStr, FilePath: finalImagePath}
@@ -639,6 +658,163 @@ func fileSizeBytes(path string) int64 {
 	return stat.Size()
 }
 
+// pickDownscalePlan 计算需要依次尝试的下采样宽度序列（纯函数，便于单测）。
+// 功能：只有当文件超过硬上限时才返回计划；计划为宽度阶梯中严格小于当前宽度的档位（从大到小）。
+// 参数/返回：width 为当前图像宽度（未知可传 0）；currentBytes 为当前文件字节数；返回需尝试的宽度切片，无需处理时返回 nil。
+// 失败场景：无。
+// 副作用：无（不读写文件、不执行命令）。
+func pickDownscalePlan(width int, currentBytes int64) []int {
+	if currentBytes <= screenshotSizeHardCapBytes {
+		return nil
+	}
+	var plan []int
+	for _, w := range screenshotDownscaleWidths {
+		// 跳过不小于当前宽度的档位：缩放只会变小，放大无意义。
+		if width > 0 && w >= width {
+			continue
+		}
+		plan = append(plan, w)
+	}
+	return plan
+}
+
+// pngWidth 读取 PNG 文件的像素宽度（解析 IHDR，纯 Go 实现，零子进程开销）。
+// 功能：读取文件头 24 字节，校验 PNG magic 后取 IHDR 中的宽度（大端 uint32）。
+// 参数/返回：path 为 PNG 文件路径；返回宽度像素值，失败返回错误。
+// 失败场景：文件打开/读取失败、非 PNG 文件、宽度非法时返回错误。
+// 副作用：仅读取文件头，不修改文件。
+func pngWidth(path string) (int, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer file.Close()
+
+	header := make([]byte, 24)
+	if _, err := io.ReadFull(file, header); err != nil {
+		return 0, fmt.Errorf("读取 PNG 头部失败: %w", err)
+	}
+	if !bytes.HasPrefix(header, []byte{0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A}) {
+		return 0, fmt.Errorf("不是合法的 PNG 文件")
+	}
+	width := binary.BigEndian.Uint32(header[16:20])
+	if width == 0 {
+		return 0, fmt.Errorf("PNG 宽度非法")
+	}
+	return int(width), nil
+}
+
+// downscalePNGToWidth 用 ffmpeg 把 PNG 等比缩放到指定宽度并重编码为 PNG（保持 PNG 容器，不转 JPEG）。
+// 功能：执行一次 lanczos 缩放重编码，输出到 dstPath；仅做几何缩放，不做色彩转换（输入已是完成色调映射的 SDR 像素）。
+// 参数/返回：ffmpegPath 为 ffmpeg 路径；srcPath 为源图；dstPath 为输出路径；width 为目标宽度；成功返回 nil。
+// 失败场景：目标宽度非法、ffmpeg 执行失败、未产出有效文件时返回错误。
+// 副作用：执行 ffmpeg 子进程并向 dstPath 写文件。
+func downscalePNGToWidth(ffmpegPath string, srcPath string, dstPath string, width int) error {
+	if width <= 0 {
+		return fmt.Errorf("无效的目标宽度: %d", width)
+	}
+	args := []string{
+		"-y", "-v", "error",
+		"-i", srcPath,
+		"-frames:v", "1",
+		"-vf", fmt.Sprintf("scale=%d:-2:flags=lanczos", width),
+		"-compression_level", "6",
+		"-pred", "mixed",
+		dstPath,
+	}
+	out, err := exec.Command(ffmpegPath, args...).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ffmpeg 缩放失败: %s", formatFFmpegFailureOutput(string(out), err))
+	}
+	if stat, statErr := os.Stat(dstPath); statErr != nil || stat.Size() == 0 {
+		return fmt.Errorf("ffmpeg 缩放未生成有效文件")
+	}
+	return nil
+}
+
+// ensureScreenshotWithinBudget 把单张正式截图压进字节预算（优先 ≤目标 700KB，其次 ≤硬上限 1MiB）。
+// 功能：文件未超硬上限时直接返回；否则按宽度阶梯逐档 lanczos 下采样，命中目标即停，否则取首个 ≤硬上限的档；
+//       若最小档仍超硬上限，则保留最小档结果并打 Warn（不无下限缩放、不转格式）。
+// 参数/返回：ffmpegPath 为 ffmpeg 路径；imagePath 为生成的正式截图路径（可能被原地替换）；返回最终文件字节数，失败返回错误。
+// 失败场景：读取宽度失败、ffmpeg 重编码失败、临时文件重命名失败时返回错误（调用方按现有失败语义丢图）。
+// 副作用：可能用缩放后的新文件覆盖原文件；执行 ffmpeg 子进程；输出中文尺寸日志。
+func ensureScreenshotWithinBudget(ffmpegPath string, imagePath string) (int64, error) {
+	cur := fileSizeBytes(imagePath)
+	if cur <= screenshotSizeHardCapBytes {
+		return cur, nil
+	}
+
+	width, err := pngWidth(imagePath)
+	if err != nil {
+		return cur, fmt.Errorf("读取截图宽度失败: %w", err)
+	}
+
+	plan := pickDownscalePlan(width, cur)
+	var bestBytes int64
+	var bestPath string
+	var bestWidth int
+
+	for _, w := range plan {
+		tmpPath := fmt.Sprintf("%s.w%d.png", imagePath, w)
+		if err := downscalePNGToWidth(ffmpegPath, imagePath, tmpPath, w); err != nil {
+			_ = os.Remove(tmpPath)
+			return cur, err
+		}
+		size := fileSizeBytes(tmpPath)
+
+		// 命中理想目标：直接采用该档结果。
+		if size > 0 && size <= screenshotSizeTargetBytes {
+			if bestPath != "" {
+				_ = os.Remove(bestPath)
+			}
+			if err := os.Rename(tmpPath, imagePath); err != nil {
+				_ = os.Remove(tmpPath)
+				return cur, err
+			}
+			logx.PlainInfof("   📦 尺寸预算: %.2f MB 超标，下采样至 %d 宽 → %.2f MB（≤目标 %.0f KB）", float64(cur)/1024.0/1024.0, w, float64(size)/1024.0/1024.0, float64(screenshotSizeTargetBytes)/1024.0)
+			return size, nil
+		}
+
+		// 未达目标但满足硬上限：记住首个合格档，继续尝试更小档以争取达到目标。
+		if size > 0 && size <= screenshotSizeHardCapBytes && bestPath == "" {
+			bestBytes = size
+			bestPath = tmpPath
+			bestWidth = w
+			continue
+		}
+		_ = os.Remove(tmpPath)
+	}
+
+	// 所有档位都未达目标，但存在满足硬上限的档：取最优档。
+	if bestPath != "" {
+		if err := os.Rename(bestPath, imagePath); err != nil {
+			_ = os.Remove(bestPath)
+			return cur, err
+		}
+		logx.PlainInfof("   📦 尺寸预算: %.2f MB 超标，下采样至 %d 宽 → %.2f MB（≤硬上限 %.0f KB）", float64(cur)/1024.0/1024.0, bestWidth, float64(bestBytes)/1024.0/1024.0, float64(screenshotSizeHardCapBytes)/1024.0)
+		return bestBytes, nil
+	}
+
+	// 极端情况：最小档仍超硬上限，保留最小档结果并告警（不无下限缩放、不转格式）。
+	if len(plan) > 0 {
+		minWidth := plan[len(plan)-1]
+		tmpPath := fmt.Sprintf("%s.w%d.png", imagePath, minWidth)
+		if err := downscalePNGToWidth(ffmpegPath, imagePath, tmpPath, minWidth); err == nil {
+			size := fileSizeBytes(tmpPath)
+			if size > 0 {
+				if renameErr := os.Rename(tmpPath, imagePath); renameErr == nil {
+					logx.PlainWarnf("⚠️ 截图尺寸预算: 已下采样至最小档 %d 宽仍 %.2f MB > 硬上限 %.0f KB，保留该结果", minWidth, float64(size)/1024.0/1024.0, float64(screenshotSizeHardCapBytes)/1024.0)
+					return size, nil
+				}
+			}
+			_ = os.Remove(tmpPath)
+		}
+	}
+	// 兜底出口：计划为空（当前宽已是最小档或无更小档）或兜底重编码失败，仍超硬上限时保留当前结果，必须告警。
+	logx.PlainWarnf("⚠️ 截图尺寸预算未达标（%.2f MB > %.0f KB），保留当前结果", float64(cur)/1024.0/1024.0, float64(screenshotSizeHardCapBytes)/1024.0)
+	return cur, nil
+}
+
 func detectHDRFromPNG(ffprobePath string, pngPath string) (bool, error) {
 	cmd := exec.Command(ffprobePath, "-v", "error", "-show_streams", pngPath)
 	out, err := cmd.CombinedOutput()
@@ -830,11 +1006,21 @@ type toneMapChainOptions struct {
 }
 
 var (
+	// screenshotSizeTargetBytes 为正式截图理想目标字节数（700KB），优先压到该值以内。
+	screenshotSizeTargetBytes int64 = 700 * 1024
+	// screenshotSizeHardCapBytes 为正式截图硬上限字节数（1MiB），任何情况下尽量不超过。
+	screenshotSizeHardCapBytes int64 = 1024 * 1024
+	// screenshotDownscaleWidths 为下采样宽度阶梯，从大到小依次尝试（跳过不小于当前宽度的档位）。
+	screenshotDownscaleWidths = []int{1920, 1280, 1024, 800, 640}
+)
+
+var (
 	// pngToneMapChainOptions 为正式截图（PNG/JPEG）链路使用的色彩转换选项。
+	// 三条链首均限制最大宽度 1920（仅缩小不放大），避免 4K 源产出超大中间产物；预算收口在生成后另行处理。
 	pngToneMapChainOptions = toneMapChainOptions{
-		SDRFilter:      "format=rgb24",
-		HDRTail:        "format=rgb24",
-		FallbackFilter: "scale='min(3840,iw)':-2:flags=lanczos,unsharp=5:5:0.30:3:3:0.15,format=yuv420p",
+		SDRFilter:      "scale='min(1920,iw)':-2:flags=lanczos,format=rgb24",
+		HDRTail:        "scale='min(1920,iw)':-2:flags=lanczos,format=rgb24",
+		FallbackFilter: "scale='min(1920,iw)':-2:flags=lanczos,unsharp=5:5:0.30:3:3:0.15,format=yuv420p",
 		OutRange:       "pc",
 	}
 	// previewToneMapChainOptions 为预览截图（640 宽 JPEG）链路使用的色彩转换选项。

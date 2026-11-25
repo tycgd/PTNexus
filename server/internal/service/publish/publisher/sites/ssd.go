@@ -192,8 +192,8 @@ func resolveSSDScreenshots(uploadData map[string]any) string {
 }
 
 // ssdNonPNGScreenshotReason 校验截图是否全部为 PNG，返回首个非 PNG 截图的原因说明。
-// 不可说（SSD）站点要求截图必须是 PNG 图片；HDR 资源截图在生成阶段会被色调映射压缩成 jpg，
-// 若直接提交会导致转种报错，故在此前置拦截。全部为 PNG 或无截图时返回空串。
+// 不可说（SSD）站点要求截图必须是 PNG 图片；正式截图链路输出恒为 .png（仅做分辨率下采样，不转 JPEG），
+// 此处仍前置校验，防止其它来源的非 PNG 截图混入导致转种报错。全部为 PNG 或无截图时返回空串。
 func ssdNonPNGScreenshotReason(uploadData map[string]any) string {
 	raw := resolveUploadSection(uploadData, "screenshots")
 	if strings.TrimSpace(raw) == "" {
