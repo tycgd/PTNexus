@@ -6,6 +6,9 @@ name: Beta 构建（runtime / Docker / 滚动 prerelease）
 # - 产物挂到固定 prerelease tag=beta
 # - 不改仓库 CHANGELOG.json / 根 UPDATE_MANIFEST.json
 on:
+  push:
+    branches:
+      - agsv-fix
   workflow_dispatch:
     inputs:
       build_runtime:
