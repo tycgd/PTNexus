@@ -1,17 +1,49 @@
 package settings
 
 import (
+	"encoding/json"
 	"fmt"
 	"runtime"
+	"strconv"
 	"strings"
 
 	processingrepair "github.com/pt-nexus/server/internal/service/processing/repair"
 )
 
+// toFloatWithDefault 解析浮点数配置，兼容 int/float/字符串/json.Number，无法解析时回退默认值。
+func toFloatWithDefault(value any, fallback float64) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int32:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	case json.Number:
+		if parsed, err := typed.Float64(); err == nil {
+			return parsed
+		}
+	case string:
+		if parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64); err == nil {
+			return parsed
+		}
+	}
+	return fallback
+}
+
 func (s *SettingsService) GetCrossSeedSettings() map[string]any {
 	defaults := map[string]any{
 		"image_hoster":                     "pixhost",
 		"screenshot_count":                 3,
+		"montage_enabled":                  true,
+		"montage_columns":                  3,
+		"montage_count":                    9,
+		"montage_header":                   true,
+		"montage_min_gap":                  8,
 		"pixhost_domain":                   "img2.pixhost.cc",
 		"agsv_email":                       "",
 		"agsv_password":                    "",
@@ -56,6 +88,30 @@ func (s *SettingsService) SaveCrossSeedSettings(newSettings map[string]any) erro
 		screenshotCount = 10
 	}
 	merged["screenshot_count"] = screenshotCount
+	// 拼图配置归一化：开关/列数(1~4)/帧数(1~20)/顶部 header/最小间隔(≥0)；缺键回退默认，不影响旧字段。
+	merged["montage_enabled"] = toBool(merged["montage_enabled"], true)
+	montageColumns := toIntWithDefault(merged["montage_columns"], 3)
+	if montageColumns < 1 {
+		montageColumns = 1
+	}
+	if montageColumns > 4 {
+		montageColumns = 4
+	}
+	merged["montage_columns"] = montageColumns
+	montageCount := toIntWithDefault(merged["montage_count"], 9)
+	if montageCount < 1 {
+		montageCount = 1
+	}
+	if montageCount > 20 {
+		montageCount = 20
+	}
+	merged["montage_count"] = montageCount
+	merged["montage_header"] = toBool(merged["montage_header"], true)
+	montageMinGap := toFloatWithDefault(merged["montage_min_gap"], 8)
+	if montageMinGap < 0 {
+		montageMinGap = 0
+	}
+	merged["montage_min_gap"] = montageMinGap
 	if toString(merged["image_hoster"], "") == "" {
 		merged["image_hoster"] = "pixhost"
 	}

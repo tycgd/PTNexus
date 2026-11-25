@@ -634,50 +634,23 @@ func generateAndUploadScreenshotsWithPoints(input ScreenshotGenerateInput, selec
 	for i, point := range points {
 		timeStr := formatSecondHMS(point)
 		fileStem := fmt.Sprintf("s%d_%s", i+1, timeStr)
-		rawPNG := filepath.Join(tmpDir, "raw_"+fileStem+".png")
 		finalImagePath := filepath.Join(tmpDir, fileStem+".png")
 
 		logx.PlainInfof("")
 		logx.PlainInfof("--- 处理第 %d/%d 张截图 (%s) ---", i+1, len(points), timeStr)
 
-		// HDR 源（HDR10/HLG/DV）：mpv 0.35 默认 vo=gpu 不识别 DV P5 的 IPTPQc2（截图会白屏/偏色），
-		// 且 headless 下对 HDR10 不做色调映射，统一改由 ffmpeg libplacebo 直截（无字幕，避免 mpv 渲染出糊图/白屏）。
-		if videoIsHDR {
-			if subtitleSID > 0 {
-				logx.PlainInfof("   ⚠️ HDR 源不支持 mpv 字幕渲染，本张按无字幕直截（字幕 sid=%d）", subtitleSID)
-			}
-			if err := captureDVPNGWithFFmpeg(ffmpegPath, targetResult.TargetFile, point, finalImagePath); err != nil {
-				logx.PlainInfof("❌ ffmpeg HDR 直截失败: %s", sanitizeCommandErrForLog(err))
-				continue
-			}
-			if _, sizeErr := ensureScreenshotWithinBudget(ffmpegPath, finalImagePath); sizeErr != nil {
-				logx.PlainInfof("❌ 截图尺寸预算处理失败: %s", sanitizeCommandErrForLog(sizeErr))
-				continue
-			}
-			logx.Infof(screenshotPreviewLogModule, "截图 DV 直截 scene=正式截图 index=%d output=%s", i+1, finalImagePath)
-			jobs <- uploadJob{Index: i, TimeStr: timeStr, FilePath: finalImagePath}
-			continue
+		// HDR 源不支持 mpv 字幕渲染：captureFormalFramePNG 内部统一走 ffmpeg libplacebo 直截（无字幕）。
+		if videoIsHDR && subtitleSID > 0 {
+			logx.PlainInfof("   ⚠️ HDR 源不支持 mpv 字幕渲染，本张按无字幕直截（字幕 sid=%d）", subtitleSID)
 		}
 
-		if err := captureRawPNGWithMPV(mpvPath, targetResult.TargetFile, point, rawPNG, subtitleSID); err != nil {
-			logx.PlainInfof("❌ mpv 截图失败: %s", sanitizeCommandErrForLog(err))
+		startCapture := time.Now()
+		if err := captureFormalFramePNG(mpvPath, ffmpegPath, targetResult.TargetFile, point, subtitleSID, videoIsHDR, finalImagePath); err != nil {
+			logx.PlainInfof("❌ 截图失败: %s", sanitizeCommandErrForLog(err))
 			continue
 		}
-		if stat, statErr := os.Stat(rawPNG); statErr != nil || stat.Size() == 0 {
-			logx.PlainInfof("❌ mpv 未生成文件: %s", rawPNG)
-			continue
-		}
+		captureTime := time.Since(startCapture).Seconds()
 
-		// mpv 已将 HDR（含 HDR10/HLG）色调映射为 SDR 像素（截图 tag-colorspace 已关闭），
-		// 此处仅做 PNG 无损压缩，不再二次映射，避免发灰发暗。
-		startCompress := time.Now()
-		if err := compressPNGWithFFmpeg(ffmpegPath, rawPNG, finalImagePath, false); err != nil {
-			logx.PlainInfof("❌ ffmpeg 压缩失败: %s", sanitizeCommandErrForLog(err))
-			continue
-		}
-		compressTime := time.Since(startCompress).Seconds()
-
-		srcSize := fileSizeBytes(rawPNG)
 		preBudgetSize := fileSizeBytes(finalImagePath)
 		finalSize, sizeErr := ensureScreenshotWithinBudget(ffmpegPath, finalImagePath)
 		if sizeErr != nil {
@@ -692,11 +665,7 @@ func generateAndUploadScreenshotsWithPoints(input ScreenshotGenerateInput, selec
 		if preBudgetSize > 0 && dstSize < preBudgetSize {
 			downscaleNote = "，已按预算下采样"
 		}
-		ratio := 0.0
-		if srcSize > 0 {
-			ratio = float64(dstSize) / float64(srcSize) * 100
-		}
-		logx.PlainInfof("   ✅ 压缩完成: %.2f MB (压缩率 %.1f%%) | 耗时 %.2fs%s", float64(dstSize)/1024.0/1024.0, ratio, compressTime, downscaleNote)
+		logx.PlainInfof("   ✅ 截图完成: %.2f MB | 耗时 %.2fs%s", float64(dstSize)/1024.0/1024.0, captureTime, downscaleNote)
 		jobs <- uploadJob{Index: i, TimeStr: timeStr, FilePath: finalImagePath}
 	}
 
@@ -745,6 +714,26 @@ func generateAndUploadScreenshotsWithPoints(input ScreenshotGenerateInput, selec
 	}
 	if len(finalList) == 0 {
 		return nil, fmt.Errorf("未生成可用截图")
+	}
+
+	// 拼图（contact sheet）：使用与正式单图不同时间点的帧，成功则置于返回列表首位。
+	// 任何一步失败都只告警并降级为只出单图，绝不让整单失败；盒子代理远程模式在前面已提前 return，天然跳过。
+	if montageCfg := montageConfigFromConfig(input.RootConfig); montageCfg.Enabled {
+		if montageURL, ok := tryGenerateAndUploadMontage(montageRequest{
+			ffmpegPath:   ffmpegPath,
+			mpvPath:      mpvPath,
+			videoPath:    targetResult.TargetFile,
+			formalPoints: points,
+			subtitleSID:  subtitleSID,
+			isHDR:        videoIsHDR,
+			config:       montageCfg,
+			uploadCtx:    uploadCtx,
+			mediaText:    resolveMediaTextFromScreenshotInput(payload, sourceInfo),
+			tmpDir:       tmpDir,
+		}); ok {
+			finalList = append([]string{montageURL}, finalList...)
+			logx.PlainInfof("✅ 已生成并上传截图拼图: %s", montageURL)
+		}
 	}
 	return finalList, nil
 }

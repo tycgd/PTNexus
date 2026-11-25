@@ -216,6 +216,11 @@ func defaultConfig() map[string]any {
 		"cross_seed": map[string]any{
 			"image_hoster":                     "pixhost",
 			"screenshot_count":                 3,
+			"montage_enabled":                  true,
+			"montage_columns":                  3,
+			"montage_count":                    9,
+			"montage_header":                   true,
+			"montage_min_gap":                  8,
 			"pixhost_domain":                   "img2.pixhost.cc",
 			"agsv_email":                       "",
 			"agsv_password":                    "",

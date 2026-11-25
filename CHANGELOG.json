@@ -15,6 +15,14 @@
   ],
   "history": [
     {
+      "version": "v4.0.22",
+      "date": "2026.11.26",
+      "changes": [
+        "新增：发种截图拼图（contact sheet）—— 正式截图完成后，另取一批不同时间点的画面拼成 3 列×3 行（9 帧）整图，顶部叠加一行 MediaInfo（文件/时长/分辨率编码/音轨），拼图与正式单图同时上传，拼图排在截图列表首位，发种时一张图即可概览全片",
+        "优化：拼图帧与正式截图帧严格错开（默认最小间隔 8 秒），不复用同一批画面；可在 cross_seed 配置 montage_enabled（默认开）/ montage_columns（默认3）/ montage_count（默认9）/ montage_header（默认开）/ montage_min_gap（默认8秒）；拼图任一环节失败自动降级为仅出正式单图，不影响发种；盒子代理远程模式自动跳过拼图"
+      ]
+    },
+    {
       "version": "v4.0.21",
       "date": "2026.11.25",
       "changes": [
