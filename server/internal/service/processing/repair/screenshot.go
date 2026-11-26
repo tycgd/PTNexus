@@ -389,6 +389,26 @@ func GenerateAndUploadScreenshots(input ScreenshotGenerateInput) ([]string, erro
 	if len(finalList) == 0 {
 		return nil, fmt.Errorf("未生成可用截图")
 	}
+
+	// 拼图（contact sheet）：媒体校验路径与 preview 路径等价接入；成功置于返回列表首位，失败只降级为只出单图。
+	if montageCfg := montageConfigFromConfig(input.RootConfig); montageCfg.Enabled {
+		logx.PlainInfof("（媒体校验路径）尝试生成拼图...")
+		if montageURL, ok := tryGenerateAndUploadMontage(montageRequest{
+			ffmpegPath:   ffmpegPath,
+			mpvPath:      mpvPath,
+			videoPath:    targetVideoFile,
+			formalPoints: points,
+			subtitleSID:  subtitleSID,
+			isHDR:        videoIsHDR,
+			config:       montageCfg,
+			uploadCtx:    uploadCtx,
+			mediaText:    resolveMediaTextFromScreenshotInput(payload, sourceInfo),
+			tmpDir:       tmpDir,
+		}); ok {
+			finalList = append([]string{montageURL}, finalList...)
+			logx.PlainInfof("✅ 已生成并上传截图拼图（媒体校验路径）: %s", montageURL)
+		}
+	}
 	return finalList, nil
 }
 
