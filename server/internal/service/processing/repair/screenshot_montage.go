@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/pt-nexus/server/internal/platform/logx"
 )
@@ -290,7 +291,8 @@ func tryGenerateAndUploadMontage(req montageRequest) (string, bool) {
 	}
 	fontFile := montageFontFile()
 
-	montagePNG := filepath.Join(montageDir, "montage.png")
+	// 最终拼图文件名必须唯一：不同视频的拼图若同名会在图床互相覆盖并串缓存。
+	montagePNG := filepath.Join(montageDir, fmt.Sprintf("montage_%d.png", time.Now().UnixNano()))
 	if asmErr := assembleMontagePNG(req.ffmpegPath, frames, req.config.Columns, headerText, fontFile, montagePNG); asmErr != nil {
 		logx.Warnf(screenshotPreviewLogModule, "截图拼图拼接失败，降级只出单图 err=%v", asmErr)
 		return "", false
