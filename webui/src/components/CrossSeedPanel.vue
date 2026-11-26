@@ -192,7 +192,7 @@ import { createSeedFlow } from './cross-seed/panel/seedFlow'
 import type { WorkingTorrent } from './cross-seed/panel/types'
 import { crossSeedPanelContextKey } from './cross-seed/crossSeedPanelContext'
 import { resolveSourceTorrentId } from '@/utils/sourceTorrentId'
-import { toPixhostThumbnail } from '@/utils/imageUrl'
+import { toPixhostThumbnail, toDisplayImageUrl } from '@/utils/imageUrl'
 import type {
   AudioTitlePreview,
   BdinfoProgress,
@@ -468,14 +468,15 @@ const parseImageUrls = (value: string | string[] | null | undefined) => {
 const imageProxyMap = ref(new Map<string, string>())
 
 const getProxyImageUrl = (originalUrl: string): string => {
-  // 如果已经尝试过代理URL，直接返回
+  // 如果已经解析过该原图 URL，直接返回缓存的展示 URL。
   if (imageProxyMap.value.has(originalUrl)) {
     return imageProxyMap.value.get(originalUrl)!
   }
 
-  // 首次尝试原始URL
-  imageProxyMap.value.set(originalUrl, originalUrl)
-  return originalUrl
+  // 首次：末日图床走服务端代理，其余图床原样展示。
+  const displayUrl = toDisplayImageUrl(originalUrl)
+  imageProxyMap.value.set(originalUrl, displayUrl)
+  return displayUrl
 }
 
 // 生成用于展示的缩略图 URL：pixhost 原图转缩略图，其余沿用代理图片 URL 逻辑。
@@ -497,24 +498,20 @@ const getPixhostThumbnailOnly = (originalUrl: string): string => {
 }
 
 const handleImageErrorWithProxy = (url: string, type: 'poster' | 'screenshot', index: number) => {
-  // 检查是否已经尝试过代理
   const currentUrl = imageProxyMap.value.get(url)
-  if (currentUrl && !currentUrl.startsWith('http://pt-nexus-proxy.sqing33.dpdns.org/')) {
-    // 尝试使用代理URL
-    const proxyUrl = `http://pt-nexus-proxy.sqing33.dpdns.org/${url}`
+  const proxyUrl = toDisplayImageUrl(url)
+  // 末日图床：当前仍是原图直链时，切换为服务端图片代理再试一次。
+  if (proxyUrl !== url && currentUrl !== proxyUrl) {
     imageProxyMap.value.set(url, proxyUrl)
-
-    // 强制更新图片显示
     const imgElements = document.querySelectorAll(`img[src="${currentUrl}"]`)
     imgElements.forEach((img) => {
       img.setAttribute('src', proxyUrl)
     })
-
-    console.log(`图片加载失败，尝试使用代理URL: ${proxyUrl}`)
-    return // 不调用原有的错误处理，给代理URL一次机会
+    console.log(`图片加载失败，改用服务端图片代理: ${proxyUrl}`)
+    return
   }
 
-  // 如果代理URL也失败了，调用原有的错误处理
+  // 代理仍失败（或非末日图床），走原有错误处理。
   handleImageError(url, type, index)
 }
 

@@ -23,7 +23,7 @@ func JWTGuard(authService *service.AuthService) gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		if strings.HasPrefix(path, "/api/auth/") || path == "/api/upload_image" || path == "/health" {
+		if strings.HasPrefix(path, "/api/auth/") || path == "/api/upload_image" || path == "/api/image_proxy" || path == "/health" {
 			c.Next()
 			return
 		}

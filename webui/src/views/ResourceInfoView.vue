@@ -265,7 +265,7 @@ import { onMounted, ref } from 'vue'
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import { CopyDocument, View, Link, Edit } from '@element-plus/icons-vue'
-import { toPixhostThumbnail } from '@/utils/imageUrl'
+import { toPixhostThumbnail, toDisplayImageUrl } from '@/utils/imageUrl'
 
 interface ResourceInfoItem {
   id: number
@@ -417,10 +417,10 @@ function cleanPoster(raw: string): string {
   return raw
 }
 
-// thumbUrl 将海报/截图原图直链转换为缩略图直链（pixhost 专属），用于快速预览。
+// thumbUrl 将海报/截图原图直链转换为缩略图直链（pixhost 专属），并让末日图床走服务端图片代理。
 function thumbUrl(raw: string): string {
   const full = cleanPoster(raw)
-  return toPixhostThumbnail(full)
+  return toDisplayImageUrl(toPixhostThumbnail(full))
 }
 
 // screenshotUrlList 从资源信息库中的视频截图 BBCode 文本提取图片直链列表。
@@ -432,17 +432,25 @@ function screenshotUrlList(item: ResourceInfoItem | null): string[] {
   return matches.length > 0 ? matches : []
 }
 
-// handleScreenshotError 截图（缩略图）加载失败时回退原图；原图也失败则隐藏，避免破图占位。
+// handleScreenshotError 截图加载失败回退链：缩略图 → 原图 → 服务端代理原图 → 隐藏。
 function handleScreenshotError(event: Event, fullUrl: string) {
   const img = event.target as HTMLImageElement | null
   if (!img) return
-  if (img.dataset.fallback === '1') {
-    img.style.display = 'none'
+  const stage = img.dataset.fallbackStage || '0'
+  if (stage === '0') {
+    img.dataset.fallbackStage = '1'
+    img.src = fullUrl
     return
   }
-  img.dataset.fallback = '1'
-  // 缩略图失败，回退到原图直链
-  img.src = fullUrl
+  if (stage === '1') {
+    const proxied = toDisplayImageUrl(fullUrl)
+    if (proxied && proxied !== fullUrl && proxied !== img.src) {
+      img.dataset.fallbackStage = '2'
+      img.src = proxied
+      return
+    }
+  }
+  img.style.display = 'none'
 }
 
 async function fetchList() {

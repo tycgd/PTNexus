@@ -212,6 +212,7 @@ func NewApp() (*App, error) {
 	migrateHandler := migratehandler.New(migrateService)
 	torrentTransferHandler := handler.NewTorrentTransferHandler(torrentTransferService)
 	logsHandler := handler.NewLogsHandler(service.NewLogExportService())
+	imageProxyHandler := handler.NewImageProxyHandler()
 
 	gin.SetMode(resolveGinMode())
 	engine := gin.New()
@@ -253,6 +254,7 @@ func NewApp() (*App, error) {
 		resourceInfoHandler,
 		bangumiHandler,
 		reseedHandler,
+		imageProxyHandler,
 	)
 
 	return &App{Engine: engine, trackerWorker: trackerService, dailyWorker: trafficDailyService}, nil
@@ -279,6 +281,7 @@ func registerRoutes(
 	resourceInfoHandler *handler.ResourceInfoHandler,
 	bangumiHandler *handler.BangumiHandler,
 	reseedHandler *handler.ReseedHandler,
+	imageProxyHandler *handler.ImageProxyHandler,
 ) {
 	engine.GET("/health", func(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"status": "服务正常", "service": "pt-nexus-go"})
@@ -323,6 +326,8 @@ func registerRoutes(
 		api.POST("/cookiecloud/sync", settingsHandler.CookieCloudSync)
 		api.POST("/test_connection", settingsHandler.TestConnection)
 		api.POST("/upload_image", settingsHandler.UploadImage)
+		// 服务端图片代理：前端 <img> 无法带 Authorization，走白名单放行的 GET /api/image_proxy。
+		api.GET("/image_proxy", imageProxyHandler.Proxy)
 		api.GET("/settings", settingsHandler.GetSettings)
 		api.POST("/settings", settingsHandler.UpdateSettings)
 		api.GET("/downloader_info", settingsHandler.DownloaderInfo)

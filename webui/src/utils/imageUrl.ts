@@ -15,3 +15,18 @@ export function isPixhostDirectImage(url: string): boolean {
   if (!url) return false
   return /^https?:\/\/img\d+\.pixhost\.(?:to|cc)\/images\/.+$/i.test(url.trim())
 }
+
+// 将「展示用」图片 URL 转换：末日图床（img.seedvault.cn）走服务端图片代理，
+// 其余图床保持原样。仅影响页面显示，不改变存储/发种的图片 URL。
+export function toDisplayImageUrl(url: string): string {
+  if (!url) return url
+  try {
+    const parsed = new URL(url)
+    if (parsed.hostname.toLowerCase() === 'img.seedvault.cn') {
+      return `/api/image_proxy?u=${encodeURIComponent(url)}`
+    }
+  } catch {
+    return url
+  }
+  return url
+}
